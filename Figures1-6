@@ -1,0 +1,1107 @@
+library(Seurat) # v4.1.0
+library(SeuratObject) # v4.0.4
+library(cowplot)
+library(dplyr)
+library(patchwork)
+library(pheatmap)
+library(DOSE)
+library(org.Mm.eg.db)
+library(topGO)
+library(clusterProfiler) # v4.4.4
+library(enrichplot)
+library(pathview)
+library(ggrepel)
+library(ggplot2) # v3.3.6
+library(ggthemes)
+library(readxl)
+library(tidyverse)
+library(reshape2)
+library(lemon)
+library(VennDiagram)
+library(ggvenn)
+library(SCopeLoomR)
+library(RColorBrewer)
+
+
+### Fig1 - Overview of scRNA ####
+combined_1 <- readRDS(file = "combined1.rds")
+
+# Cell tpye names
+Celltype <- RenameIdents(combined_1, `0` = "0_Mac", `1` = "1_pDC", `2` = "3_NK", `3` = "4_Dividing", `4` = "5_Gran", `5` = "2_T", 
+                         `6` = "6_DC", `7` = "9_B", `8` = "2_T", `9` = "8_Neut", `10` = "7_Plasma-B", `11` = "0_Mac", `12` = "10_Endo",
+                         `13` = "1_pDC", `14`="7_Plasma-B",`15`="1_pDC",`16`="6_DC", `17`="8_Neut", `18`="11_Hep", `19`="0_Mac", 
+                         `20`= "5_Gran", `21`= "12_HSC")
+Celltype$Celltype <- Celltype@active.ident
+Celltype$Celltype <- factor(Celltype$Celltype, levels = c("0_Mac", "1_pDC", "2_T", "3_NK", "4_Dividing", "5_Gran", "6_DC", "7_Plasma-B", "8_Neut", "9_B",
+                                                          "10_Endo", "11_Hep", "12_HSC"))
+Celltype@active.ident <- Celltype$Celltype
+saveRDS(Celltype, file = "Celltype.rds")
+
+
+## Fig.1 B
+corlor.use <- c("#3182BDFF", "#E6550DFF", "#FED439FF", "#756BB1FF", "#969696FF", "#D2AF81FF", "#FDAE6BFF", 
+                           "#A1D99BFF", "#31A354FF", "#4DBBD5FF", "#BCBDDCFF", "#FD8CC1FF", "#91331FFF")
+DimPlot(Celltype, reduction = "umap", group.by = "Celltype", label = TRUE, label.size = 3.5, repel = TRUE, cols = corlor.use)
+
+
+## Fig.1 C
+cellnum <- as.data.frame(table(Celltype@meta.data$Celltype))
+colnames(cellnum) <- c("Celltype","Cellnumber")
+ggplot(data = cellnum, mapping = aes(x = Cellnumber, y = Celltype, fill = Celltype)) +
+  geom_bar(stat = 'identity') + theme_void() + 
+  xlim(0, 4800) +
+  theme(text = element_text(family = "sans"),
+        plot.title=element_text(size=20)) + 
+  scale_fill_manual(values = corlor.use) + 
+  scale_y_discrete(limits=rev(levels(cellnum$Celltype))) + 
+  geom_text(mapping = aes(label = Cellnumber), size = 5, vjust = 0.5, hjust = 0) +
+  labs(title = "Cell Number") 
+
+
+## Fig.1 D
+CelltypeMarker <- FindAllMarkers(Celltype, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.25)
+Marker <- read_excel("SupplementaryTable.xlsx", sheet = "STable4", skip = 1)
+Marker <- subset(Marker, Marker$forHeatmap == "T")
+celltype.averages <- AverageExpression(Celltype, features = Marker$gene, return.seurat = TRUE, assays = "RNA")
+DoHeatmap(celltype.averages, features = Marker$Gene, group.colors = corlor.use, size = 3.5, draw.lines = FALSE) + 
+  scale_fill_gradient2(low = "navy", mid = "white", high = "firebrick3") 
+
+
+## Fig.1 E
+FeaturePlot(Celltype, features = c("Lyz2"), pt.size = 0.1, 
+            cols = c("lightgrey","red"), min.cutoff = 0) + 
+  theme_few() + labs(x = "", y = "") + 
+  theme(legend.position = "bottom", legend.text = element_text(size = 10), 
+        legend.background = element_blank(),
+        legend.key.height = unit(6,"pt"), legend.key.width = unit(20,"pt"),
+        axis.text = element_blank(), axis.ticks=element_blank())
+# "Lyz2" - Mac, "Siglech" - pDC, "Cd3d" - T, "Nkg7" - NK, "Csf3r" - Gran, "Cst3" - DC, "Camp" - Neut, "Jchain" - Plasma-B, "Cd79a" - B
+
+
+
+### Fig2 - DEG of Group ####
+## Fig.2 A
+DimPlot(Celltype, reduction = "umap", group.by = "Group", cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC"))
+
+
+## Fig.2 B
+corlor.use <- c("#3182BDFF", "#E6550DFF", "#FED439FF", "#756BB1FF", "#969696FF", "#D2AF81FF", "#FDAE6BFF", 
+                "#A1D99BFF", "#31A354FF", "#4DBBD5FF", "#BCBDDCFF", "#FD8CC1FF", "#91331FFF")
+cellnum_group <- table(Celltype@meta.data$Celltype, Celltype@meta.data$Group)
+cellfreq_group <- apply(cellnum_group, 2, function(x){x/sum(x)})
+cellfreq_group <- as.data.frame.table(cellfreq_group)
+colnames(cellfreq_group) <- c("Celltype","Group","Cellfreq")
+cellfreq_group$Group <- factor(cellfreq_group$Group, levels = c("DM","WM","WS"))
+ggplot(cellfreq_group, aes(x=Group, y=Cellfreq, fill = Celltype, stratum = Celltype, alluvium = Celltype)) + 
+  theme_classic(base_size = 10) +
+  geom_alluvium(width=0.7, curve_type = "linear") +
+  geom_stratum(width=0.7, size=0.1) +
+  geom_bar(position = "fill", stat = "identity", color = 'black', width = 0.7) +
+  scale_fill_manual(values = corlor.use) + 
+  labs(x = '', y= '', title = 'Cell Frequency') +
+  coord_flip() +
+  scale_y_reverse(labels = c("100%","75%","50%","25%","0%")) +
+  theme(legend.direction = "horizontal", 
+        legend.position = 'bottom', 
+        legend.box.spacing = unit(0.1, "cm"),
+        text = element_text(family = "sans"),
+        legend.text=element_text(size=10), 
+        axis.title = element_text(size = 12),
+        axis.text.y = element_text(size = 10))
+
+
+## Fig.2 C
+# Data prepare
+WMWSDEG <- FindMarkers(Celltype, ident.1 = "WM", ident.2 = "WS", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DMWMDEG <- FindMarkers(Celltype, ident.1 = "DM", ident.2 = "WM", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+Wlabel = c("Camp", "Lcn2", "Hmgb2", "Ccl3", "H2-D1", "Oas2", "B2m", "Tbx21", "H2-K1", "H2-Q4", "Rsad2",  "Il2rb", "Irf7", "Gzmb", "Isg15", "Ccl5") # 16 genes
+Mlabel = c("B2m", "Xcl1", "Lat", "Lck", "Cd2", "Cxcr4", "Ptprc", "Cebpb", "Itgam", "Il1b", "Anxa1", "Cd44", "Camp", "Lcn2",  "Hmgb2", "Ccl3", "H2-D1", "H2-Q4", "Gzmb", "Ccl5") # 20 genes
+WMWSDEG$change <- as.factor(ifelse(WMWSDEG$p_val_adj < 0.05 & abs(WMWSDEG$avg_log2FC) > 0.5, ifelse(WMWSDEG$avg_log2FC > 0.5, 'UP', 'DOWN'), 'NOT'))
+DMWMDEG$change <- as.factor(ifelse(DMWMDEG$p_val_adj < 0.05 & abs(DMWMDEG$avg_log2FC) > 0.5, ifelse(DMWMDEG$avg_log2FC > 0.5, 'UP', 'DOWN'), 'NOT'))
+table(WMWSDEG$change)
+# DOWN  NOT   UP 
+# 129 1738   87 
+table(DMWMDEG$change)
+# DOWN  NOT   UP 
+# 907 1906  416 
+# Plot
+WMWSDEG$label <- NA
+WMWSDEG$symbol <- rownames(WMWSDEG)
+for (i in Wlabel) { WMWSDEG$label[which(WMWSDEG$symbol == i )] <- i }
+p1 <- ggplot(WMWSDEG, aes(x = avg_log2FC, y = -log10(p_val_adj), color = change)) + 
+  geom_point(alpha = 0.8, size = 1.5) + theme_bw(base_size = 9) +
+  xlab("log2FC") + ylab("-log10(Padj)") +
+  xlim(-2.5,2.5) + 
+  theme(plot.title = element_text(hjust = .5), 
+        panel.grid.minor = element_blank(), panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(size=1, colour = "black"),
+        text = element_text(family = "sans")) +
+  scale_color_manual(name = "", values = c("#FF6633", "#3366FF", "#CCCCCC"), limits = c("UP", "DOWN", "NOT")) + 
+  geom_label_repel(aes(label = label), show.legend = F, force=10, size = 3, max.overlaps = 20,
+                   label.padding = 0.15, box.padding = unit(0.1, "lines"), point.padding = unit(0.1, "lines")) + 
+  geom_hline(aes(yintercept=abs(-log10(0.05))), linetype= "dotted",color = "#999999") +
+  geom_vline(aes(xintercept=0.5),linetype= "dotted",color = "#999999") + 
+  geom_vline(aes(xintercept=-0.5),linetype= "dotted",color = "#999999") + 
+  annotate("text", x=2, y=10, label="UP 87",color = "#FF6633") + 
+  annotate("text", x=-2, y=10, label="DOWN 129",color = "#3366FF") +
+  ggtitle("WM vs. WS") 
+DMWMDEG$label <- NA
+DMWMDEG$symbol <- rownames(DMWMDEG)
+for (i in Mlabel) { DMWMDEG$label[which(DMWMDEG$symbol == i )] <- i }
+p2 <- ggplot(DMWMDEG, aes(x = avg_log2FC, y = -log10(p_val_adj), color = change))+
+  geom_point(alpha = 0.8, size = 1.5) + theme_bw(base_size = 9) + 
+  xlab("log2FC") + ylab("-log10(Padj)") +
+  xlim(-3,5) + theme() +
+  theme(plot.title = element_text(hjust = .5),
+        panel.grid.minor = element_blank(), 
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        axis.line = element_line(size=1, colour = "black"),
+        text = element_text(family = "sans"))+
+  scale_color_manual(name = "", values = c("#FF6633", "#3366FF", "#CCCCCC"), limits = c("UP", "DOWN", "NOT")) + 
+  geom_label_repel(aes(label = label), show.legend = F, force=10, size = 3, max.overlaps = 20,
+                   label.padding = 0.15, box.padding = unit(0.1, "lines"), point.padding = unit(0.1, "lines")) + 
+  geom_hline(aes(yintercept=abs(-log10(0.05))), linetype= "dotted",color = "#999999") +
+  geom_vline(aes(xintercept=0.5),linetype= "dotted",color = "#999999") + 
+  geom_vline(aes(xintercept=-0.5),linetype= "dotted",color = "#999999") + 
+  annotate("text", x=4, y=10, label="UP 416",color = "#FF6633") + 
+  annotate("text", x=-2.3, y=10, label="DOWN 907",color = "#3366FF") +
+  ggtitle("DM vs. WM")
+cowplot::plot_grid(p1, p2, ncol=2)
+
+
+## Fig.2 D
+# Antigen processing and presentation
+AverageExp <- AverageExpression(Celltype, features = c("B2m",	"H2-K1", "H2-D1",	"Cd74",	"H2-Q4", "Tap1", "H2-Ab1", "H2-Eb1", "H2-Aa",	"H2-T22",	"H2-T23",
+                                                       "Tap2",	"Klrc1", "Cd8a", "Cd8b1", "Psme1", "Klrd1", "Ifng", "Psme2b"), group.by = "Group")
+p1 <- pheatmap(AverageExp[["RNA"]], scale = "row", cluster_rows = T, cluster_cols = FALSE, angle_col = c("315"), fontsize = 10, 
+               main = "Antigen processing and presentation")
+# defense response to virus
+AverageExp <- AverageExpression(Celltype, features = c("Isg15",	"Ccl5",	"Irf7",	"Zbp1",	"Rsad2", "Rtp4", "Oasl2",	"Oas2",	"Oas3",	"Ifi204", "Ifitm3", "Stat1",
+                                                       "Cd8a", "Cd37", "Ptpn22", "Ifng", "Ncr1", "Tagap", "Bcl2",	"Pycard"), group.by = "Group")
+p2 <- pheatmap(AverageExp[["RNA"]], scale = "row", cluster_rows = T, cluster_cols = FALSE, angle_col = c("315"), fontsize = 10, 
+               main = "defense response to virus")
+# lymphocyte mediated immunity
+AverageExp <- AverageExpression(Celltype, features = c("B2m",	"H2-K1", "H2-D1",	"Nkg7",	"Irf7",	"Gzmb",	"Serpinb9", "Rsad2", "Cd74", "H2-Q4", "Klre1", "Tbx21",	
+                                                       "Tap1",	"Clec2d",	"Klrk1", "H2-Ab1", "H2-Eb1", "Fcer1g", "H2-Aa", "H2-T22", "Gimap5", "Gimap3", "H2-T23",
+                                                       "Icam1",	"Tap2",	"Klrc1", "Cd8a",	"Sh2d1a"), group.by = "Group")
+p3 <- pheatmap(AverageExp[["RNA"]], scale = "row", cluster_rows = T, cluster_cols = FALSE, angle_col = c("315"), fontsize = 10, 
+               main = "lymphocyte mediated immunity")
+cowplot::plot_grid(p1$gtable, p2$gtable, p3$gtable, ncol=3)
+
+
+## Fig.2 E
+# Data prepare
+k = keys(org.Mm.eg.db, keytype="ENSEMBL")
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL")
+data <- WMWSDEG # DMWMDEG
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID;
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID;
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu')
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID,organism = 'mmu')
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType = "ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType = "ENTREZID")
+# Plot
+Enrich <- read_excel("SupplementaryTable.xlsx", sheet = "STable6", skip = 1)
+Enrich <- subset(Enrich, Enrich$Plot == "T")
+Enrich$Change <- factor(Enrich$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich$Comparison <- factor(Enrich$Comparison, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich,aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt")) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG Enrich")
+
+
+## Fig.2 F
+# Data prepare
+data <- WMWSDEG
+GSEAlist <- subset(data, data$p_val_adj < 0.05)
+GSEAlist$symbol <- row.names(GSEAlist)
+SymbolID <- list[match(GSEAlist$symbol,list[,"SYMBOL"]),]
+GSEAlist$ENTREZID <- SymbolID$ENTREZID
+genelistWMWS <- GSEAlist[,2] #avg_log2FC
+names(genelistWMWS) = as.character(GSEAlist[,8]) #ENTREZID
+genelistWMWS = sort(genelistWMWS, decreasing = TRUE)
+GGO_WMWS <- gseGO(geneList = genelistWMWS, OrgDb = org.Mm.eg.db, ont = "ALL", pvalueCutoff = 0.05, minGSSize = 100, eps = 0, verbose = FALSE)
+GKEGG_WMWS <- gseKEGG(geneList = genelistWMWS, organism = 'mmu', pvalueCutoff = 0.1, minGSSize = 20, eps = 0, verbose = FALSE)
+data <- DMWMDEG
+GSEAlist <- subset(data, data$p_val_adj < 0.05)
+GSEAlist$symbol <- row.names(GSEAlist)
+SymbolID <- list[match(GSEAlist$symbol,list[,"SYMBOL"]),]
+GSEAlist$ENTREZID <- SymbolID$ENTREZID
+genelistDMWM <- GSEAlist[,2] #avg_log2FC
+names(genelistDMWM) = as.character(GSEAlist[,8]) #ENTREZID
+genelistDMWM = sort(genelistDMWM, decreasing = TRUE)
+GGO_DMWM <- gseGO(geneList = genelistDMWM, OrgDb = org.Mm.eg.db, ont = "ALL", pvalueCutoff = 0.05, minGSSize = 100, eps = 0, verbose = FALSE)
+GKEGG_DMWM <- gseKEGG(geneList = genelistDMWM, organism = 'mmu', pvalueCutoff = 0.1, minGSSize = 20, eps = 0, verbose = FALSE)
+# Plot
+p1 <- gseaplot2(GGO_WMWS, geneSetID = c(4,7,14), title = "WMvsWS GSEA_GO", base_size = 8, rel_heights = c(4, 1, 1.5))
+p2 <- gseaplot2(GGO_DMWM, geneSetID = c(322,268,321), title = "DMvsWM GSEA_GO", base_size = 8, rel_heights = c(4, 1, 1.5))
+p3 <- gseaplot2(GKEGG_WMWS, geneSetID = c(14,3,2,20), title = "WMvsWS GSEA_KEGG", base_size = 8, rel_heights = c(4, 1, 1.5))
+p4 <- gseaplot2(GKEGG_DMWM, geneSetID = c(2,8,14,15), title = "DMvsWM GSEA_KEGG", base_size = 8, rel_heights = c(4, 1, 1.5))
+cowplot::plot_grid(p1, p2, ncol=2)
+cowplot::plot_grid(p3, p4, ncol=2)
+
+
+### Fig3 - Mac ####
+# Data prepare
+test <- WhichCells(Celltype, idents = "0_Mac")
+Mac <- subset(Celltype, cells = test)
+Mac <- NormalizeData(Mac, verbose = F)
+Mac <- FindVariableFeatures(Mac, selection.method = "vst", nfeatures = 2000)
+DefaultAssay(Mac) <- "integrated"
+Mac <- ScaleData(Mac, verbose=FALSE)
+Mac <- RunPCA(Mac, npcs = 50, verbose = F)
+ElbowPlot(Mac, ndims = 50)
+Mac <- RunUMAP(Mac, reduction = "pca", dims = 1:35)
+Mac <- FindNeighbors(Mac, reduction = "pca", dims = 1:35)
+Mac <- FindClusters(Mac, resolution = 0.5)
+DefaultAssay(Mac) <- "RNA"
+Marker0_5 <- FindAllMarkers(Mac, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.25)
+Mac_subname <- RenameIdents(Mac, `0` = "c0_Macs-Ifitm3", `1` = "c1_Macs-Cd14", `2` = "c2_Macs-Ccl5", `3` = "c3_Kupffer-Lgmn", `4` = "c4_Macs-Adgre4", `5` = "c5_Macs-Il1b")
+Mac$Subname <- Mac_subname@active.ident
+
+
+## Fig.3 A
+DimPlot(Mac, reduction = "umap", group.by = "Subname", label = F) + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 12), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+
+## Fig.3 B
+Marker_Mac <- read_excel("SupplementaryTable.xlsx", sheet = "STable8", skip = 1)
+Marker_Mac <- subset(Marker_Mac, Marker_Mac$forHeatmap == "T")
+Mac.averages <- AverageExpression(Mac, features = Marker_Mac$gene, assay = "RNA", group.by = "Subname")
+Mac.averages <- as.data.frame(t(Mac.averages[["RNA"]]))
+pheatmap(Mac.averages, scale = "column", cluster_rows = FALSE, cluster_cols = FALSE,
+         angle_col = 315, fontsize = 8, border_color = NA, main = "Macrophage Subcluster Marker Gene",
+         color = colorRampPalette(colors = c("navy","white","firebrick3"))(100))
+
+
+## Fig.3 C
+DimPlot(Mac, reduction = "umap", group.by = "seurat_clusters", split.by = "Group", label = TRUE) + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 10), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+
+## Fig.3 D
+subnum_group <- as.data.frame(table(Mac@meta.data$Subname, Mac@meta.data$Group))
+colnames(subnum_group) <- c("Subname","Group","Cellfreq")
+ggplot(subnum_group, aes(Group, y = Cellfreq, fill = Subname)) + 
+  theme_classic(base_size = 9) +
+  geom_bar(position = "fill", stat = "identity", lwd = 0.3, color='black', width=0.85) +
+  scale_y_continuous(labels = scales::percent) + 
+  labs(x = '', y= '', title = 'Mac Subcluster Frequency') +
+  theme(legend.position = 'right',
+        legend.key.size = unit(10, "pt"),
+        text = element_text(family = "sans"),
+        axis.text.x = element_text(size = 10))
+
+
+## Fig.3 E 
+# Data Prepare
+macrophage <- WhichCells(Mac, idents = c("0","1","2","4","5"))
+Macrophage <- subset(Mac, cells = macrophage)
+DEG_MacWMWS <- FindMarkers(Macrophage, ident.1 = "WM", ident.2 = "WS", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DEG_MacDMWM <- FindMarkers(Macrophage, ident.1 = "DM", ident.2 = "WM", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+
+k = keys(org.Mm.eg.db, keytype="ENSEMBL") # loading anno data
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL")
+data <- DEG_MacWMWS # DEG_MacDMWM
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DOWN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID;
+SymbolID_DOWN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID;
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+
+# Plot
+Enrich_Mac <- read_excel("STable10.xlsx", skip = 1)
+Enrich_Mac <- subset(Enrich_Mac, Enrich_Mac$Plot == "T")
+Enrich_Mac$Change <- factor(Enrich_Mac$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich_Mac$Comparison <- factor(Enrich_Mac$Comparison, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich_Mac, aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt"),) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  labs(x = '', y= '') +
+  ggtitle("GO&KEGG of DEGs - Mac")
+
+
+## Fig.3 F
+# Data Prepare
+C0Marker <- subset(Marker0_5, Marker0_5$cluster == "0") # 0, 1, 2, 3, 4, 5
+data <- C0Marker # 0, 1, 2, 3, 4, 5
+DEG_UP <- data.frame(c(data$gene[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(data$gene[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+# Plot
+Enrich_MacSub <- read_excel("STable11.xlsx", skip = 1)
+Enrich_MacSub <- subset(Enrich_MacSub, Enrich_MacSub$Plot == "T")
+Enrich_MacSub$Change <- factor(Enrich_MacSub$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+ggplot(data = Enrich_MacSub, aes(x = Subname, y = Description, colour = Change, shape = Category)) + 
+  geom_point(aes(size = Count)) + theme_bw(base_size = 8) + 
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(size = 8, vjust = 1, hjust = 0, angle = 330),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0)) + 
+  scale_color_manual(values = c("red", "blue")) + 
+  scale_size_continuous(range = c(1,4), breaks = c(3,8,13)) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG of Subcluster Markers - Mac")
+
+
+## Fig.3 H
+WMWSDEG <- rbind(DEG_KupWMWS, DEG_MacWMWS)
+DMWMDEG <- rbind(DEG_KupDMWM, DEG_MacDMWM)
+f1 <- function(x){x$symbol}
+f2 <- function(x){unique(x)}
+WMWS_UP <- subset(WMWSDEG, WMWSDEG$avg_log2FC > 0.5 & WMWSDEG$p_val_adj < 0.05) %>% f1 %>% f2
+WMWS_DN <- subset(WMWSDEG, WMWSDEG$avg_log2FC < -0.5 & WMWSDEG$p_val_adj < 0.05) %>% f1 %>% f2
+DMWM_UP <- subset(DMWMDEG, DMWMDEG$avg_log2FC > 0.5 & DMWMDEG$p_val_adj < 0.05) %>% f1 %>% f2
+DMWM_DN <- subset(DMWMDEG, DMWMDEG$avg_log2FC < -0.5 & DMWMDEG$p_val_adj < 0.05) %>% f1 %>% f2
+venn_list_mac <- list(WMWS_UP = WMWS_UP, WMWS_DN = WMWS_DN, DMWM_UP = DMWM_UP, DMWM_DN = DMWM_DN)
+color.use <- c("#FED439", "#FD7446", "#709AE1", "#46732E")
+ggvenn(venn_list_mac, 
+       fill_color = color.use, fill_alpha = 0.7, # 填充色
+       set_name_color = color.use, 
+       stroke_color = "#FFFFFF",
+       text_size = 5,
+       show_percentage = F)
+
+
+## Fig.3 I
+# Prepare matrix: Randomly extract 1500/4693
+subcell <- sample(colnames(Mac),1500)
+Macsub <- Mac[,subcell]
+exprMat <- as.matrix(Macsub@assays$RNA@counts)
+
+# meta information
+cellInfo <- data.frame(Macsub@meta.data) 
+colnames(cellInfo)[which(colnames(cellInfo)=="Group")] <- "sample"
+colnames(cellInfo)[which(colnames(cellInfo)=="seurat_clusters")] <- "cluster"
+colnames(cellInfo)[which(colnames(cellInfo)=="Subname")] <- "celltype"
+cellInfo <- cellInfo[,c("sample","cluster","celltype")]
+
+exprMat <- as.matrix(scRNA@assays$RNA@counts)
+# Set Envoriment
+dbs <- c("mm10__refseq-r80__500bp_up_and_100bp_down_tss.mc9nr.feather",
+         "mm10__refseq-r80__10kb_up_and_down_tss.mc9nr.feather") 
+names(dbs) <- c("old10-500bp", "old10-10kb")
+scenicOptions <- initializeScenic(org="mgi",nCores = 1, dbs = dbs, dbDir = "cisTarget_databases", datasetTitle = "mm10")
+motifAnnotations_mgi <- motifAnnotations
+scenicOptions <- initializeScenic(org="mgi",nCores = 1, dbs = dbs, 
+                                  dbDir = "cisTarget_databases", datasetTitle = "mm10")
+# Transcriptional regulation network
+# Gene filtering: The sum of gene expression levels > cell count * 3%, and expressed in 1% of cells
+genesKept <- geneFiltering(exprMat, scenicOptions, 
+                           minCountsPerGene = 3 * 0.01 * ncol(exprMat), 
+                           minSamples = ncol(exprMat) * 0.01)
+exprMat_filtered <- exprMat[genesKept, ]
+runCorrelation(exprMat_filtered, scenicOptions) # Calculate correlation matrix
+exprMat_filtered_log <- log2(exprMat_filtered+1) # TF-Targets Correlation Regression Analysis
+runGenie3(exprMat_filtered_log, scenicOptions, nParts = 20) 
+# co-expression module
+exprMat_log <- log2(exprMat+1)
+scenicOptions@settings$dbs <- scenicOptions@settings$dbs["old10-10kb"] # Toy run settings
+scenicOptions <- runSCENIC_1_coexNetwork2modules(scenicOptions)
+# Identifying regulon
+scenicOptions@settings$dbs <- "mm10__refseq-r80__10kb_up_and_down_tss.mc9nr.feather" 
+scenicOptions <- runSCENIC_2_createRegulons(scenicOptions, coexMethod=c("top10perTarget"))
+library(doParallel)
+exprMat_all<- as.matrix(Mac@assays$RNA@counts) # load all Mac to calculate regulon
+exprMat_all <- log2(exprMat_all+1)
+scenicOptions <- runSCENIC_3_scoreCells(scenicOptions, exprMat_all)
+scenicOptions <- runSCENIC_4_aucell_binarize(scenicOptions)
+tsneAUC(scenicOptions, aucType="AUC") # choose settings
+AUCmatrix <- readRDS("int/3.4_regulonAUC.Rds")
+AUCmatrix <- AUCmatrix@assays@data@listData$AUC
+AUCmatrix <- data.frame(t(AUCmatrix), check.names=F)
+RegulonName_AUC <- colnames(AUCmatrix)
+RegulonName_AUC <- gsub(' \\(','_',RegulonName_AUC)
+RegulonName_AUC <- gsub('\\)','',RegulonName_AUC)
+colnames(AUCmatrix) <- RegulonName_AUC
+AUCmatrix <- AUCmatrix[,order(colnames(AUCmatrix))] 
+scRNAauc <- AddMetaData(scRNA, AUCmatrix)
+scRNAauc@assays$integrated <- NULL
+
+vl1 <- VlnPlot(scRNAauc, features = "Irf7_extended_32g", pt.size = 0, group.by = "Subname", split.by = "Group",
+               cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC")) + 
+  ggtitle('Irf7_extended_32g - Mac Sub') +
+  ylab(label = "Regulon Activity (AUC)") + xlab(label = "") + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        axis.text.x = element_text(size = 9, angle = 315, vjust = 1,hjust = 0),
+        axis.text.y = element_text(size = 7, angle = 0, hjust = 1)) 
+vl2 <- VlnPlot(Celltype, features = "Irf7", pt.size = 0, group.by = "Celltype", split.by = "Group",
+               cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC")) + 
+  ggtitle('Irf7 - All Cells') + xlab(label = "") + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        axis.text.x = element_text(size = 9, angle = 315, vjust = 1,hjust = 0),
+        axis.text.y = element_text(size = 7, angle = 0, hjust = 1)) 
+CombinePlots(plots = list(vl1, vl2), nrow = 1, rel_widths = c(1, 2), legend = 'right')  
+
+
+### Fig4 - T ####
+# Data Prepare
+test <- WhichCells(Celltype, idents = "2_T")
+Tcell <- subset(Celltype, cells = test)
+Tcell <- NormalizeData(Tcell, verbose = F)
+Tcell <- FindVariableFeatures(Tcell, selection.method = "vst", nfeatures = 2000)
+DefaultAssay(Tcell) <- "integrated"
+Tcell <- ScaleData(Tcell, verbose=FALSE)
+Tcell <- RunPCA(Tcell, npcs = 50, verbose = F)
+ElbowPlot(Tcell, ndims = 50)
+Tcell <- RunUMAP(Tcell, reduction = "pca", dims = 1:35)
+Tcell <- FindNeighbors(Tcell, reduction = "pca", dims = 1:35)
+Tcell <- FindClusters(Tcell, resolution = 1.6)
+DefaultAssay(Tcell) <- "RNA"
+Marker0_9 <- FindAllMarkers(Tcell, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.25)
+T_named <- RenameIdents(Tcell, `0` = "c0_Cd4-Fos-Tnaive", `1` = "c1_Cd4-Lef1-Tcm", `2` = "c2_Cd8-Klk8-Tcm", `3` = "c3_Cd4-Fyn-Teff", `4` = "c4_Cd8-Dadpl1-Tnaive", 
+                        `5` = "c5_Cd8-Mif-Tem", `6` = "c6_Cd4-Ifng-Th", `7` = "c7_ILC2-Rora", `8` = "c8_NKT-Ccl5", `9` = "c9_Cd4-Ctla4-Tex")
+Tcell$Subname <- T_named@active.ident 
+
+
+## Fig.4 A
+DimPlot(Tcell, reduction = "umap", group.by = "Subname", label = F) + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 12), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+
+## Fig.4 B
+Marker_T <- read_excel("SupplementaryTable.xlsx", sheet = "STable14", skip = 1)
+Marker_T <- subset(Marker_T, Marker_T$forHeatmap == "T")
+T.averages <- AverageExpression(Tcell, features = Marker_T$gene, assay = "RNA", group.by = "Subname")
+T.averages <- as.data.frame(t(T.averages[["RNA"]]))
+pheatmap(T.averages, scale = "column", cluster_rows = FALSE, cluster_cols = FALSE,
+         angle_col = 315, fontsize = 9, border_color = NA, main = "T cells Subcluster Marker",
+         color = colorRampPalette(colors = c("navy","white","firebrick3"))(100))
+
+
+## Fig.4 C
+DimPlot(Tcell, reduction = "umap", group.by = "seurat_clusters", split.by = "Group", label = T) + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 10), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+
+## Fig.4 D
+subnum_group <- as.data.frame(table(Tcell@meta.data$Subname, Tcell@meta.data$Group))
+colnames(subnum_group) <- c("Subname","Group","Cellfreq")
+ggplot(subnum_group, aes(x = Group, y = Cellfreq, fill = Subname)) + 
+  theme_classic(base_size = 9) +
+  geom_bar(position = "fill", stat = "identity",lwd = 0.3, color='black', width=0.85) +
+  scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = 'right',
+        legend.key.size = unit(10, "pt"),
+        text = element_text(family = "sans"),
+        axis.text.x = element_text(size = 10)) +
+  labs(x = '', y= '', title = 'T cells Sub Frequency')
+
+
+## Fig.4 F
+phase_group_T <- as.data.frame(table(Tcell@meta.data$Phase, Tcell@meta.data$Group))
+colnames(phase_group_T) <- c("Phase","Group","Cellnum")
+ggplot(phase_group_T, aes(Group, y = Cellnum, fill = Phase)) + theme_classic(base_size = 10) +
+  geom_bar(position = "fill", stat = "identity",color = 'black', width = 0.85) +
+  scale_y_continuous(labels = scales::percent) + 
+  labs(x = '', y = '', title = 'T cells Phase Frequency') +
+  theme(legend.position = 'right',
+        text = element_text(family = "sans"), 
+        axis.title = element_text(size = 11),
+        axis.text.x = element_text(size = 10))
+
+
+## Fig.4 G
+# Data Prepare
+DEG_TWMWS <- FindMarkers(Tcell, ident.1 = "WM", ident.2 = "WS", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DEG_TDMWM <- FindMarkers(Tcell, ident.1 = "DM", ident.2 = "WM", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DEG_TWMWS$change <- as.factor(ifelse(DEG_TWMWS$p_val_adj < 0.05 & abs(DEG_TWMWS$avg_log2FC) > 0.5, ifelse(DEG_TWMWS$avg_log2FC > 0.5, 'UP', 'DOWN'), 'NOT'))
+DEG_TDMWM$change <- as.factor(ifelse(DEG_TDMWM$p_val_adj < 0.05 & abs(DEG_TDMWM$avg_log2FC) > 0.5, ifelse(DEG_TDMWM$avg_log2FC > 0.5, 'UP', 'DOWN'), 'NOT')
+
+k = keys(org.Mm.eg.db, keytype="ENSEMBL") # loading anno data
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL")
+data <- DEG_TWMWS # DEG_TDMWM
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+
+#Plot
+Enrich_T <- read_excel("STable20.xlsx", skip = 1)
+Enrich_T <- subset(Enrich_T, Enrich_T$Plot == "T")
+Enrich_T$Change <- factor(Enrich_T$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich_T$Comparison <- factor(Enrich_T$Comparison, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich_T, aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt")) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG Enrich of DEGs - T")
+
+
+## Fig.4 H
+Enrich_TSub <- read_excel("STable17.xlsx", skip = 1)
+Enrich_TSub <- subset(Enrich_TSub, Enrich_TSub$Plot == "T")
+Enrich_TSub$Change <- factor(Enrich_TSub$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+ggplot(data = Enrich_TSub, aes(x = Subname, y = Description, colour = Change, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) + 
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 1, hjust = 1, angle = 315),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0)) + 
+  scale_color_manual(values = c("red", "blue")) + 
+  scale_size_continuous(range = c(2,5)) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG Enrich of Sub Markers - T")
+
+
+## Fig.4 I
+WMWSDEG <- DEG_TWMWS
+DMWMDEG <- DEG_TDMWM
+WMWS_UP <- row.names(subset(WMWSDEG, WMWSDEG$avg_log2FC > 0.5 & WMWSDEG$p_val_adj < 0.05))
+WMWS_DN <- row.names(subset(WMWSDEG, WMWSDEG$avg_log2FC < -0.5 & WMWSDEG$p_val_adj < 0.05))
+DMWM_UP <- row.names(subset(DMWMDEG, DMWMDEG$avg_log2FC > 0.5 & DMWMDEG$p_val_adj < 0.05))
+DMWM_DN <- row.names(subset(DMWMDEG, DMWMDEG$avg_log2FC < -0.5 & DMWMDEG$p_val_adj < 0.05))
+venn_list_T <- list(WMWS_UP = WMWS_UP, WMWS_DN = WMWS_DN, DMWM_UP = DMWM_UP, DMWM_DN = DMWM_DN)
+color.use <- c("#FED439", "#FD7446", "#709AE1", "#46732E")
+ggvenn(venn_list_T, 
+       fill_color = color.use, fill_alpha = 0.7, # 填充色
+       set_name_color = color.use, 
+       stroke_color = "#FFFFFF",
+       text_size = 5,
+       show_percentage = F)
+
+
+## Fig.4 J
+cellInfo <- data.frame(Tcell@meta.data) 
+colnames(cellInfo)[which(colnames(cellInfo)=="Group")] <- "sample"
+colnames(cellInfo)[which(colnames(cellInfo)=="seurat_clusters")] <- "cluster"
+colnames(cellInfo)[which(colnames(cellInfo)=="Subname")] <- "celltype"
+cellInfo <- cellInfo[,c("sample","cluster","celltype")]
+exprMat <- as.matrix(Tcell@assays$RNA@counts)
+
+# Set Envoriment
+dbs <- c("mm10__refseq-r80__500bp_up_and_100bp_down_tss.mc9nr.feather", "mm10__refseq-r80__10kb_up_and_down_tss.mc9nr.feather") 
+names(dbs) <- c("old10-500bp", "old10-10kb")
+scenicOptions <- initializeScenic(org="mgi",nCores = 1, dbs = dbs, dbDir = "cisTarget_databases", datasetTitle = "mm10")
+motifAnnotations_mgi <- motifAnnotations
+scenicOptions <- initializeScenic(org="mgi",nCores = 1, dbs = dbs, dbDir = "cisTarget_databases", datasetTitle = "mm10")
+
+# Transcriptional regulation network
+# Gene filtering: The sum of gene expression levels > cell count * 3%, and expressed in 1% of cells
+genesKept <- geneFiltering(exprMat, scenicOptions, 
+                           minCountsPerGene = 3 * 0.01 * ncol(exprMat), 
+                           minSamples = ncol(exprMat) * 0.01)
+exprMat_filtered <- exprMat[genesKept, ]
+runCorrelation(exprMat_filtered, scenicOptions) # Calculate correlation matrix
+exprMat_filtered_log <- log2(exprMat_filtered+1) # TF-Targets Correlation Regression Analysis
+runGenie3(exprMat_filtered_log, scenicOptions, nParts = 20) 
+# co-expression module
+exprMat_log <- log2(exprMat+1)
+scenicOptions@settings$dbs <- scenicOptions@settings$dbs["old10-10kb"] # Toy run settings
+scenicOptions <- runSCENIC_1_coexNetwork2modules(scenicOptions)
+# Identifying regulon
+scenicOptions@settings$dbs <- "mm10__refseq-r80__10kb_up_and_down_tss.mc9nr.feather" 
+scenicOptions <- runSCENIC_2_createRegulons(scenicOptions, coexMethod=c("top10perTarget"))
+library(doParallel)
+exprMat <- log2(exprMat+1)
+scenicOptions <- runSCENIC_3_scoreCells(scenicOptions, exprMat)
+scenicOptions <- runSCENIC_4_aucell_binarize(scenicOptions)
+tsneAUC(scenicOptions, aucType="AUC") # choose settings
+# Load AUC matrix
+library(SCopeLoomR)
+library(ggplot2)
+AUCmatrix <- readRDS("int/3.4_regulonAUC.Rds")
+AUCmatrix <- AUCmatrix@assays@data@listData$AUC
+AUCmatrix <- data.frame(t(AUCmatrix), check.names=F)
+RegulonName_AUC <- colnames(AUCmatrix)
+RegulonName_AUC <- gsub(' \\(','_',RegulonName_AUC)
+RegulonName_AUC <- gsub('\\)','',RegulonName_AUC)
+colnames(AUCmatrix) <- RegulonName_AUC
+AUCmatrix <- AUCmatrix[,order(colnames(AUCmatrix))] 
+scRNAauc <- AddMetaData(scRNA, AUCmatrix)
+scRNAauc@assays$integrated <- NULL
+Tcellauc <- scRNAauc
+saveRDS(Tcellauc,'Tcellauc.rds')
+
+# Plot
+vl1 <- VlnPlot(Tcellauc, features = "Cebpb_extended_77g", pt.size = 0, group.by = "Subname", split.by = "Group",
+               cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC")) + 
+  ggtitle('Cebpb_extended_77g - T Sub') +
+  ylab(label = "Regulon Activity (AUC)") + xlab(label = "") + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        axis.text.x = element_text(size = 9, angle = 315, vjust = 1,hjust = 0),
+        axis.text.y = element_text(size = 7, angle = 0, hjust = 1)) 
+vl2 <- VlnPlot(Celltype, features = "Cebpb", pt.size = 0, group.by = "Celltype", split.by = "Group",
+               cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC")) + 
+  ggtitle('Cebpb - All Cells') + xlab(label = "") + 
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        axis.text.x = element_text(size = 9, angle = 315, vjust = 1,hjust = 0),
+        axis.text.y = element_text(size = 7, angle = 0, hjust = 1)) 
+CombinePlots(plots = list(vl1, vl2), nrow = 1, rel_widths = c(1, 2), legend = 'right')
+
+
+### Fig5 - NK&B cell ####
+## Data Prepare
+test <- WhichCells(Celltype, idents = "3_NK")
+NK <- subset(Celltype, cells = test)
+NK <- NormalizeData(NK, verbose = F)
+NK <- FindVariableFeatures(NK, selection.method = "vst", nfeatures = 2000)
+DefaultAssay(NK) <- "integrated"
+NK <- ScaleData(NK, verbose=FALSE)
+NK <- RunPCA(NK, npcs = 50, verbose = F)
+ElbowPlot(NK, ndims = 50)
+NK <- RunUMAP(NK, reduction = "pca", dims = 1:50)
+NK <- FindNeighbors(NK, reduction = "pca", dims = 1:50)
+DefaultAssay(NK) <- "RNA"
+
+
+# Fig.5 A
+DimPlot(NK, reduction = "umap", group.by = "Group", cols = c("#8A9197CC", "#F39B7FCC", "#1A9993CC"))
+
+
+# Fig.5 B
+num_group <- as.data.frame(table(NK@meta.data$Group))
+num_group$AllCellnum <- as.numeric(c("9948","8198","3597"))
+colnames(num_group) <- c("Group","NKnum","AllCellnum")
+num_Freq <- num_group %>% mutate(Cellfreq = NKnum/AllCellnum)
+colnames(subnum_group) <- c("Group","AllCellNum","Cellfreq")
+num_Freq$Group <- factor(num_Freq$Group, levels = c("WS", "WM", "DM"), ordered = T)
+ggplot() +
+  theme_classic(base_size = 15) +
+  geom_col(data = num_Freq[,1:2], aes(x = Group, y = NKnum, fill = Group), 
+           width=0.85, fill = c("#8A9197CC", "#F39B7FCC", "#1A9993CC")) +
+  geom_point(data = num_Freq[,c(1,4)], aes(x = Group, y = Cellfreq*8000), size = 3) + 
+  geom_line(data = num_Freq[,c(1,4)], aes(x = Group, y = Cellfreq*8000), cex = 1.2, group = 1) +
+  scale_y_continuous(sec.axis = sec_axis(~ ./80, name = "Frequency (%)")) + 
+  labs(x = '', y= 'Cell Number', title = 'Cell Number & Frequency') +
+  theme(legend.position = 'right',
+        text = element_text(family = "sans"), 
+        axis.title = element_text(size = 16),
+        axis.text.x = element_text(size = 16)) 
+
+
+# Fig.5 C
+# Data prepare
+DEG_NKWMWS <- FindMarkers(NK, ident.1 = "LWM", ident.2 = "LWS", group.by="orig.ident", verbose = FALSE, logfc.threshold = 0.05)
+DEG_NKDMWM <- FindMarkers(NK, ident.1 = "LDM", ident.2 = "LWM", group.by="orig.ident", verbose = FALSE, logfc.threshold = 0.05)
+
+k = keys(org.Mm.eg.db, keytype="ENSEMBL")
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL") 
+data <- DEG_NKWMWS # DEG_NKDMWM
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+
+# Plot
+Enrich_NK <- read_excel("SupplementaryTable.xlsx", sheet = "STable20", skip = 1)
+Enrich_NK <- subset(Enrich_NK, Enrich_NK$Plot == "T")
+Enrich_NK$Change <- factor(Enrich_NK$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich_NK$Comparison <- factor(Enrich_NK$Comparison, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich_NK, aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt")) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG of DEGs - NK")
+
+
+## Fig.5 D
+# Data Prepare
+test <- WhichCells(Celltype, idents = "9_B")
+Bcell <- subset(Celltype, cells = test)
+Bcell <- NormalizeData(Bcell, verbose = F)
+Bcell <- FindVariableFeatures(Bcell, selection.method = "vst", nfeatures = 2000)
+DefaultAssay(Bcell) <- "integrated"
+Bcell <- ScaleData(Bcell, verbose = FALSE)
+Bcell <- RunPCA(Bcell, features = VariableFeatures(object = Bcell), npcs = 50, verbose = F)
+Bcell <- RunUMAP(Bcell, reduction = "pca", dims = 1:50)
+Bcell <- FindNeighbors(Bcell, reduction = "pca", dims = 1:50)
+Bcell <- FindClusters(Bcell, resolution = 1)
+DefaultAssay(Bcell) <- "RNA"
+Marker0_4 <- FindAllMarkers(Bcell, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.25)
+B_named <- RenameIdents(Bcell, `0` = "c0_B-H2-K1", `1` = "c1_B-Hmgb2", `2` = "c2_B-Cd74", `3` = "c3_B-Activated", `4` = "c4_B & T")
+Bcell$Subname <- B_named@active.ident
+
+# Plot
+DimPlot(Bcell, reduction = "umap", group.by = "Subname", label = FALSE) + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 12), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+## Fig.5 E
+Marker_B <- read_excel("SupplementaryTable.xlsx", sheet = "STable21", skip = 1)
+Marker_B <- subset(Marker_B, Marker_B$forHeatmap == "T")
+B.averages <- AverageExpression(Bcell, features = Marker_B$gene, assay = "RNA", group.by = "Subname")
+B.averages <- as.data.frame(t(B.averages[["RNA"]]))
+pheatmap(B.averages, scale = "column", cluster_rows = FALSE, cluster_cols = FALSE,
+         angle_col = 315, fontsize = 9, border_color = NA, main = "B cells Subcluster Marker Gene",
+         color = colorRampPalette(colors = c("navy","white","firebrick3"))(100))
+
+
+## Fig.5 F
+DimPlot(Bcell, reduction = "umap", group.by = "seurat_clusters", split.by = "Group", label = TRUE) +
+  theme(plot.title = element_text(size = 11, hjust = 0.5),
+        legend.position = "right", legend.text = element_text(size = 10), 
+        legend.background = element_blank(),
+        axis.text = element_text(size = 9), axis.title = element_text(size = 9))
+
+
+## Fig.5 G
+subnum_group <- as.data.frame(table(Bcell@meta.data$Subname, Bcell@meta.data$Group))
+colnames(subnum_group) <- c("Subname","Group","Cellfreq")
+ggplot(subnum_group, aes(x = Group, y = Cellfreq, fill = Subname)) + 
+  theme_classic(base_size = 9) +
+  geom_bar(position = "fill", stat = "identity",lwd = 0.3, color='black', width=0.85) +
+  scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = 'right',
+        legend.key.size = unit(10, "pt"),
+        text = element_text(family = "sans"),
+        axis.text.x = element_text(size = 10)) +
+  labs(x = '', y= '', title = 'B cells Sub Frequency')
+
+
+## Fig.5 H
+# Data prepare
+DEG_BWMWS <- FindMarkers(Bcell, ident.1 = "WM", ident.2 = "WS", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DEG_BDMWM <- FindMarkers(Bcell, ident.1 = "DM", ident.2 = "WM", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+
+k = keys(org.Mm.eg.db, keytype="ENSEMBL")
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL")
+data <- DEG_BWMWS # DEG_BDMWM
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+
+# Plot
+Enrich_B <- read_excel("SupplementaryTable.xlsx", sheet = "STable23", skip = 1)
+Enrich_B <- subset(Enrich_B, Enrich_B$Plot == "T")
+Enrich_B$Change <- factor(Enrich_B$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich_B$Comparison <- factor(Enrich_B$Comparison, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich_B, aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt")) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  scale_shape_manual(values = c(16,15,18,17)) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG of DEGs - B")
+
+
+## Fig.5 I
+# Data prepare
+test <- WhichCells(Celltype, idents = "Plasma-B")
+Plasma <- subset(Celltype, cells = test)
+Plasma <- NormalizeData(Plasma, verbose = F)
+Plasma <- FindVariableFeatures(Plasma, selection.method = "vst", nfeatures = 2000)
+DefaultAssay(Plasma) <- "integrated"
+Plasma <- ScaleData(Plasma, verbose=FALSE)
+Plasma <- RunPCA(Plasma, npcs = 50, verbose = F)
+ElbowPlot(Plasma, ndims = 50)
+Plasma <- RunUMAP(Plasma, reduction = "pca", dims = 1:30)
+DefaultAssay(Plasma) <- "RNA"
+
+DEG_PWMWS <- FindMarkers(Plasma, ident.1 = "WM", ident.2 = "WS", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+DEG_PDMWM <- FindMarkers(Plasma, ident.1 = "DM", ident.2 = "WM", group.by = "Group", verbose = FALSE, logfc.threshold = 0.05)
+
+k = keys(org.Mm.eg.db, keytype="ENSEMBL")
+list = AnnotationDbi::select(org.Mm.eg.db, keys=k, columns=c("SYMBOL","ENTREZID"), keytype="ENSEMBL")
+data <- DEG_PWMWS # DEG_PDMWM
+DEG_UP <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC > 0.5)]))
+DEG_DN <- data.frame(c(rownames(data)[which(data$p_val_adj < 0.05 & data$avg_log2FC < -0.5)]))
+colnames(DEG_UP)[1] <- "SYMBOL"
+colnames(DEG_DN)[1] <- "SYMBOL"
+SymbolID_UP <- list[match(DEG_UP$SYMBOL,list[,"SYMBOL"]),]
+DEG_UP$ENTREZID <- SymbolID_UP$ENTREZID
+SymbolID_DN <- list[match(DEG_DN$SYMBOL,list[,"SYMBOL"]),]
+DEG_DN$ENTREZID <- SymbolID_DN$ENTREZID
+ego_UP <- enrichGO(gene = DEG_UP$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+ego_DN <- enrichGO(gene = DEG_DN$ENTREZID, OrgDb = org.Mm.eg.db,ont = "ALL", pAdjustMethod = "BH", readable = TRUE)
+keggUP <- enrichKEGG(gene = DEG_UP$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggDN <- enrichKEGG(gene = DEG_DN$ENTREZID, organism = 'mmu', pvalueCutoff = 0.1)
+keggUPReadable <- setReadable(keggUP, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+keggDNReadable <- setReadable(keggDN, OrgDb = org.Mm.eg.db, keyType="ENTREZID")
+
+# Plot
+Enrich_Plasma <- read_excel("SupplementaryTable.xlsx", sheet = "STable26", skip = 1)
+Enrich_Plasma <- subset(Enrich_Plasma, Enrich_Plasma$Plot == "T")
+Enrich_Plasma$Change <- factor(Enrich_Plasma$Change, levels = c("UP", "DOWN"), ordered = TRUE)
+Enrich_Plasma$Group <- factor(Enrich_Plasma$Group, levels = c("WM vs WS", "DM vs WM"), ordered = TRUE)
+color.use <- c("#FED976", "#FEB24C", "#FD8D3C", "#FC4E2A", "#D53E4F", "#9E0142")
+ggplot(data = Enrich_Plasma, aes(x = Change, y = Description, colour = p.adjust, shape = Category)) + 
+  geom_point(aes(size = Count)) + 
+  theme_bw(base_size = 8) +  
+  theme(text = element_text(family = "sans"),
+        plot.title = element_text(size = 10, hjust = 0.5),
+        axis.text.x = element_text(size = 9, vjust = 0.5, hjust = 0.5, angle = 0),
+        axis.text.y = element_text(size = 9, vjust = 0.5, hjust = 1, angle = 0),
+        strip.text.x = element_text(size = 9, face = "bold", hjust = 0.5),
+        legend.key.height = unit(10,"pt"), legend.key.width = unit(5,"pt")) + 
+  facet_grid(.~Group, scale="free", space = "free") + 
+  scale_size_continuous(range = c(1,4)) +
+  scale_color_gradientn(colors = color.use) +
+  scale_shape_manual(values = c(16,15,18,17)) +
+  labs(x = "", y = "") + 
+  ggtitle("GO&KEGG of DEGs - Plasma-B")
+
+
+### Fig.6 - CellChat ####
+## CellChat
+Celltype <- RenameIdents(combined_1, `0` = "Mac", `1` = "pDC", `2` = "NK", `3` = "Dividing", `4` = "Gran", `5` = "T", 
+                         `6` = "DC", `7` = "B", `8` = "T", `9` = "Neut", `10` = "Plasma-B", `11` = "Mac", `12` = "Endo",
+                         `13` = "pDC", `14`="Plasma-B",`15`="pDC",`16`="DC", `17`="Neut", `18`="Hep", `19`="Mac", 
+                         `20`= "Gran", `21`= "HSC")
+
+# Split Macrophage & Kupffer
+Mac.rename <- RenameIdents(Mac, `0` = "Macrophage", `1` = "Macrophage", `2` = "Macrophage", `3` = "Kupffer", `4` = "Macrophage", `5` = "Macrophage")
+Mac$Celltype <- Mac@active.ident
+Mac.meta <- Mac@meta.data
+
+other <- WhichCells(Celltype, idents = "Macrophage", invert = T)
+OtherCell <- subset(Celltype, cells = other)
+other.meta <- OtherCell@meta.data
+
+newmeta <- rbind(other.meta, Mac.meta[,1:10])
+newmeta$Celltype <- factor(newmeta$Celltype, levels = c("Macrophage", "Kupffer", "pDC", "T", "NK", "Dividing", "Gran", "DC", 
+                                                        "Plasma-B", "Neut", "B", "Endo", "Hep", "HSC"))
+Celltype@meta.data <- newmeta
+Celltype@active.ident <- Celltype$Celltype
+
+# Split sample
+ws <- rownames(subset(newmeta, new.meta$Group == "WS"))
+wm <- rownames(subset(newmeta, new.meta$Group == "WM"))
+dm <- rownames(subset(newmeta, new.meta$Group == "DM"))
+
+WS <- subset(Celltype, cells = ws)
+WM <- subset(Celltype, cells = wm)
+DM <- subset(Celltype, cells = dm)
+
+Celltype@commands$FindClusters 
+# create a dataframe consisting of the cell labels
+data.input  <- WS@assays$RNA@data # WS WM DM
+identity = data.frame(group = WS$Celltype, row.names = names(WS$Celltype)) # WS WM DM
+unique(identity$group) # check the cell labels
+
+# Set Database
+CellChatDB <- CellChatDB.mouse # load database (CellChatDB.human,CellChatDB.mouse)
+showDatabaseCategory(CellChatDB)
+dplyr::glimpse(CellChatDB$interaction) # Show the structure of the database
+CellChatDB.use <- CellChatDB # use all CellChatDB for cell-cell communication analysis
+
+# create CellChat object
+identity$group = droplevels(identity$group, exclude = setdiff(levels(identity$group),unique(identity$group)))
+cellchat <- createCellChat(object = data.input, group.by = "Celltype")
+cellchat <- addMeta(cellchat, meta = identity)
+cellchat <- setIdent(cellchat, ident.use = "group") # set "group" as default cell identity
+levels(cellchat@idents) # show factor levels of the cell labels
+groupSize <- as.numeric(table(cellchat@idents)) # number of cells in each cell group
+
+cellchat@DB <- CellChatDB.use # set the used database in the object
+
+# Preprocessing
+cellchat <- subsetData(cellchat) # subset the expression data of signaling genes for saving computation cost
+future::plan("multiprocess", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+cellchat <- projectData(cellchat, PPI.mouse)  # project gene expression data onto PPI 
+
+# Inference of cell-cell communication network #
+cellchat <- computeCommunProb(cellchat, raw.use = FALSE) # Inference of cell-cell communication network
+cellchat <- filterCommunication(cellchat, min.cells = 10) # Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+
+cellchat <- computeCommunProbPathway(cellchat) # Infer the cell-cell communication at a signaling pathway level
+cellchat <- aggregateNet(cellchat) # Calculate the aggregated cell-cell communication network
+
+# Systems analysis of cell-cell communication network #
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+
+# Identify global communication patterns to explore how multiple cell types and signaling pathways coordinate together
+library(NMF)
+library(ggalluvial)
+# Identify outgoing/incomng communication pattern of secreting cells
+selectK(cellchat, pattern = "outgoing") 
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "outgoing", k = 5, font.size = 10) # k is the number which "Measure score" begin to drop suddenly 
+selectK(cellchat, pattern = "incoming")
+cellchat <- identifyCommunicationPatterns(cellchat, pattern = "incoming", k = 5, font.size = 10)
+
+# Identify signaling groups based on their functional similarity
+cellchat <- computeNetSimilarity(cellchat, type = "functional")
+cellchat <- netEmbedding(cellchat, type = "functional") 
+cellchat <- netClustering(cellchat, type = "functional") 
+netVisual_embedding(cellchat, type = "functional", label.size = 3.5) # Visualization in 2D-space
+
+# Identify signaling groups based on structure similarity
+cellchat <- computeNetSimilarity(cellchat, type = "structural")
+cellchat <- netEmbedding(cellchat, type = "structural")
+cellchat <- netClustering(cellchat, type = "structural")
+netVisual_embedding(cellchat, type = "structural", label.size = 3.5) # Visualization in 2D-space
+
+# Save the CellChat object #
+WS <- cellchat # WS WM DM
+
+## Comparison analyze ##
+object.list <- list(WS = WS, WM = WM, DM = DM)
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+
+# Identify signaling groups based on their functional/structural similarity
+cellchat <- computeNetSimilarityPairwise(cellchat, type = "functional")
+cellchat <- netEmbedding(cellchat, type = "functional") 
+cellchat <- netClustering(cellchat, type = "functional")
+cellchat <- computeNetSimilarityPairwise(cellchat, type = "structural")
+cellchat <- netEmbedding(cellchat, type = "structural") 
+cellchat <- netClustering(cellchat, type = "structural")
+
+
+## Fig.7 A
+cell.use <- c("Mac", "Kupffer", "pDC", "T", "NK", "DC", "Plasma-B", "B") 
+corlor.use <- c("#3182BDFF", "#9ECAE1FF", "#E6550DFF", "#FED439FF", "#756BB1FF", "#969696FF", "#D2AF81FF", "#FDAE6BFF",
+                "#A1D99BFF", "#31A354FF", "#4DBBD5FF", "#BCBDDCFF", "#FD8CC1FF", "#91331FFF")
+ht1 <- netVisual_heatmap(cellchat, comparison = c(1,2), measure = "weight", color.use = corlor.use, color.heatmap = c("navy", "firebrick3"),
+                         sources.use = cell.use, targets.use = cell.use, row.show = cell.use, col.show = cell.use,
+                         title.name = "Differential interaction strength - WM vs WS", font.size = 12)
+ht2 <- netVisual_heatmap(cellchat, comparison = c(2,3), measure = "weight", color.use = corlor.use, color.heatmap = c("navy", "firebrick3"),
+                         sources.use = cell.use, targets.use = cell.use, row.show = cell.use, col.show = cell.use,
+                         title.name = "Differential interaction strength - DM vs WM", font.size = 12)
+ht1 + ht2
+
+
+## Fig.7 B
+rankNet(cellchat, mode = "comparison", stacked = T, comparison = c(1,2,3), color.use = c("#8A9197CC", "#F39B7FCC", "#1A9993CC"),show.raw = T)
+
+
+## Fig.7 C
+pathway.show1 <- c("CCL", "CXCL", "FN1", "ICAM", "MHC-I", "MHC-II", "MIF", "THBS")
+pathway.show2 <- c("CCL", "CXCL", "ICAM", "LCK", "MHC-I", "MHC-II", "MIF", "THBS")
+p1 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Macrophage", comparison = c(1,2), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#FF6600", "#6699FF"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show1, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p2 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Macrophage", comparison = c(2,3), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#6699FF", "#339900"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show1, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p3 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Kupffer", comparison = c(1,2), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#FF6600", "#6699FF"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show1, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming")
+p4 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "Kupffer", comparison = c(2,3), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#6699FF", "#339900"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show1, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p5 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "T cell", comparison = c(1,2), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#FF6600", "#6699FF"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show2, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p6 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "T cell", comparison = c(2,3), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#6699FF", "#339900"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show2, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p7 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "NK", comparison = c(1,2), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#FF6600", "#6699FF"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show2, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+p8 <- netAnalysis_signalingChanges_scatter(cellchat, idents.use = "NK", comparison = c(2,3), point.shape = c(21, 25, 24, 23), color.use = c("#999999", "#6699FF", "#339900"), label.size = 5, dot.size = 3,
+                                           signaling = pathway.show2, xlabel = "Differential interaction strength - Outgoing", ylabel = "Differential interaction strength - Incoming") 
+patchwork::wrap_plots(plots = list(p1,p2,p3,p4,p5,p6,p7,p8), guides = "collect", ncol = 4)
+
