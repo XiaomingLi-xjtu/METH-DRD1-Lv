@@ -1,0 +1,104 @@
+library(Seurat)
+library(cowplot)
+library(dplyr)
+library(patchwork)
+
+LWS.data <- Read10X(data.dir = ".../WS/Mus_musculus_GRCm38.p5/")
+LWM.data <- Read10X(data.dir = ".../WM/Mus_musculus_GRCm38.p5/")
+LDM.data <- Read10X(data.dir = ".../DM/Mus_musculus_GRCm38.p5/")
+
+## CreateSeoratObject
+LWS <- CreateSeuratObject(counts = LWS.data, project = "LWS", min.cells = 10, min.features = 200)
+LWM <- CreateSeuratObject(counts = LWM.data, project = "LWM", min.cells = 10, min.features = 200)
+LDM <- CreateSeuratObject(counts = LDM.data, project = "LDM", min.cells = 10, min.features = 200)
+
+## MtDNA and Mmu Blood Gene QC
+Hb.genes_total <- c("Hba", "Hba-a1", "Hba-a2", "Hbz", "Hbb-y", "Hbb-bh1", "Hbb-bh0", "Hbb-b1", "Hbb-b2", "Hbb-bs", "Hbb-bt") 
+
+Hb_WS <- match(Hb.genes_total, rownames(LWS@assays$RNA))
+Hb.genes <- rownames(LWS@assays$RNA)[Hb_WS]
+Hb.genes <- Hb.genes[!is.na(Hb.genes)]
+LWS[["percent.HB"]]<- PercentageFeatureSet(LWS, features = Hb.genes)
+LWS[["percent.mt"]] <- PercentageFeatureSet(LWS, pattern = "^Mt-")
+VlnPlot(LWS, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.HB"), ncol = 4, pt.size = 1)
+plot1 <- FeatureScatter(LWS, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot2 <- FeatureScatter(LWS, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot3 <- FeatureScatter(LWS, feature1 = "nCount_RNA", feature2 = "percent.HB")
+CombinePlots(plots = list(plot1, plot2,plot3),legend="none", ncol = 3)
+
+Hb_WM <- match(Hb.genes_total, rownames(LWM@assays$RNA))
+Hb.genes <- rownames(LWM@assays$RNA)[Hb_WM]
+Hb.genes <- Hb.genes[!is.na(Hb.genes)]
+LWM[["percent.HB"]]<- PercentageFeatureSet(LWM, features = Hb.genes)
+LWM[["percent.mt"]] <- PercentageFeatureSet(LWM, pattern = "^Mt-")
+VlnPlot(LWM, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.HB"), ncol = 4, pt.size = 1)
+plot1 <- FeatureScatter(LWM, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot2 <- FeatureScatter(LWM, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot3 <- FeatureScatter(LWM, feature1 = "nCount_RNA", feature2 = "percent.HB")
+CombinePlots(plots = list(plot1, plot2,plot3),legend="none", ncol = 3)
+
+Hb_DM <- match(Hb.genes_total, rownames(LDM@assays$RNA))
+Hb.genes <- rownames(LDM@assays$RNA)[Hb_DM]
+Hb.genes <- Hb.genes[!is.na(Hb.genes)]
+LDM[["percent.HB"]]<- PercentageFeatureSet(LDM, features = Hb.genes)
+LDM[["percent.mt"]] <- PercentageFeatureSet(LDM, pattern = "^Mt-")
+VlnPlot(LDM, features = c("nFeature_RNA", "nCount_RNA", "percent.mt","percent.HB"), ncol = 4, pt.size = 1)
+plot1 <- FeatureScatter(LDM, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot2 <- FeatureScatter(LDM, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot3 <- FeatureScatter(LDM, feature1 = "nCount_RNA", feature2 = "percent.HB")
+CombinePlots(plots = list(plot1, plot2,plot3),legend="none", ncol = 3)
+
+##Add Group
+LWS$Group <- "WS"
+LWM$Group <- "WM"
+LDM$Group <- "DM"
+
+##Remove samples
+LWS <- subset(LWS, subset = nFeature_RNA > 200 & nFeature_RNA < 3000 & nCount_RNA > 600 & percent.mt < 5 & percent.HB < 1)
+LWM <- subset(LWM, subset = nFeature_RNA > 200 & nFeature_RNA < 3000 & nCount_RNA > 600 & percent.mt < 5 & percent.HB < 1)
+LDM <- subset(LDM, subset = nFeature_RNA > 200 & nFeature_RNA < 3000 & nCount_RNA > 600 & percent.mt < 5 & percent.HB < 1)
+
+## Normalization Data
+LWS <- NormalizeData(LWS, normalization.method = "LogNormalize", scale.factor = 10000, verbose = FALSE)
+LWM <- NormalizeData(LWM, normalization.method = "LogNormalize", scale.factor = 10000, verbose = FALSE)
+LDM <- NormalizeData(LDM, normalization.method = "LogNormalize", scale.factor = 10000, verbose = FALSE)
+WS <- RenameCells(object=LWS, add.cell.id="WS")
+WM <- RenameCells(object=LWM, add.cell.id="WM")
+DM <- RenameCells(object=LDM, add.cell.id="DM")
+
+## FindVariableFeatures
+WS <- FindVariableFeatures(WS, selection.method = "vst", nfeatures = 2000)
+WM <- FindVariableFeatures(WM, selection.method = "vst", nfeatures = 2000)
+DM <- FindVariableFeatures(DM, selection.method = "vst", nfeatures = 2000)
+
+## Integrate
+features <- SelectIntegrationFeatures(object.list = list(WS, WM, DM))
+immune.anchors <- FindIntegrationAnchors(object.list = list(WS, WM, DM), anchor.features = features)
+immune.combined <- IntegrateData(anchorset = immune.anchors)
+DefaultAssay(immune.combined) <- "integrated"
+
+# Scale
+immune.combined <- ScaleData(immune.combined, verbose = FALSE)
+immune.combined <- RunPCA(immune.combined, npcs = 50, verbose = FALSE)
+ElbowPlot(immune.combined, ndims = 50)
+
+immune.combined <- RunUMAP(immune.combined, reduction = "pca", dims = 1:35)
+immune.combined <- FindNeighbors(immune.combined, reduction = "pca", dims = 1:35)
+combined_1 <- FindClusters(immune.combined, resolution = 1)
+DefaultAssay(combined_1) <- "RNA"
+
+# FindMarker
+Marker0_21 <- FindAllMarkers(combined_1, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.25)
+
+
+# cluster
+Celltype <- RenameIdents(combined_1, `0` = "0_Mac", `1` = "1_pDC", `2` = "3_NK", `3` = "4_Dividing", `4` = "5_Gran", `5` = "2_T", 
+                         `6` = "6_DC", `7` = "9_B", `8` = "2_T", `9` = "8_Neut", `10` = "7_Plasma-B", `11` = "0_Mac", `12` = "10_Endo",
+                         `13` = "1_pDC", `14`="7_Plasma-B",`15`="1_pDC",`16`="6_DC", `17`="8_Neut", `18`="11_Hep", `19`="0_Mac", 
+                         `20`= "5_Gran", `21`= "12_HSC")
+
+## Cell-Cycle
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+CellCycle <- CellCycleScoring(Celltype, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+Celltype$Phase <- CellCycle@active.ident
